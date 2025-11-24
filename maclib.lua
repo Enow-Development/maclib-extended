@@ -1597,6 +1597,25 @@ function MacLib:Window(Settings)
 			-- Section order counter for tracking creation order
 			local sectionOrderCounter = 0
 
+			--[[
+				Creates a new section within the tab.
+				
+				Parameters:
+				  Settings (table):
+				    - Side (string, optional): Position and width of the section
+				      - "Left": Places section in left column (50% width)
+				      - "Right": Places section in right column (50% width)
+				      - "Full": Places section across full width (100% width)
+				      - Default: "Left" (if not specified or invalid value provided)
+				
+				Returns:
+				  SectionFunctions (table): Object containing methods to add components to the section
+				
+				Example:
+				  local leftSection = tab:Section({ Side = "Left" })
+				  local rightSection = tab:Section({ Side = "Right" })
+				  local fullSection = tab:Section({ Side = "Full" })
+			]]
 			function TabFunctions:Section(Settings)
 				local SectionFunctions = {}
 				local section = Instance.new("Frame")
