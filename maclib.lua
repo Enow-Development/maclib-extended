@@ -143,7 +143,14 @@ function MacLib:Window(Settings)
 			onScaleStart = Settings.onScaleStart,
 			onScale = Settings.onScale,
 			onScaleEnd = Settings.onScaleEnd
-		}
+		},
+		-- Animation configuration
+		animationConfig = {
+			duration = Settings.AnimationDuration or 0.3,
+			easingStyle = Settings.AnimationEasingStyle or Enum.EasingStyle.Quad,
+			easingDirection = Settings.AnimationEasingDirection or Enum.EasingDirection.Out
+		},
+		activeTween = nil -- Track active tween for cancellation if needed
 	}
 
 	-- Detect screen size using viewport/camera
@@ -193,15 +200,18 @@ function MacLib:Window(Settings)
 	end
 
 	-- Set scale to specified percentage
-	function ScaleController:SetScale(percentage)
+	function ScaleController:SetScale(percentage, animationOverride)
 		local validatedPercentage = self:ValidateScale(percentage)
 		
-		if self.isScaling then
-			return
+		-- Cancel active tween if one exists (allows interrupting animations)
+		if self.activeTween then
+			self.activeTween:Cancel()
+			self.activeTween = nil
 		end
 		
-		self.isScaling = true
+		-- Allow new scaling even if currently scaling (non-blocking)
 		local oldScale = self.currentScale
+		self.isScaling = true
 		
 		-- Fire onScaleStart callback
 		if self.callbacks.onScaleStart then
@@ -225,27 +235,48 @@ function MacLib:Window(Settings)
 			end
 		end
 		
-		-- Apply size with smooth animation
-		local tween = Tween(base, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		-- Use animation override if provided, otherwise use default config
+		local animConfig = animationOverride or self.animationConfig
+		
+		-- Apply size with smooth animation using configurable settings
+		local tweenInfo = TweenInfo.new(
+			animConfig.duration,
+			animConfig.easingStyle,
+			animConfig.easingDirection
+		)
+		
+		local tween = Tween(base, tweenInfo, {
 			Size = newSize
 		})
+		
+		self.activeTween = tween
 		tween:Play()
 		
 		-- Note: ResponsiveManager integration will be added in future updates
 		-- For now, scaling only affects the base window size
 		-- UI elements will scale automatically via UDim2.fromScale properties
 		
-		tween.Completed:Connect(function()
-			self.isScaling = false
-			
-			-- Fire onScaleEnd callback
-			if self.callbacks.onScaleEnd then
-				local success, err = pcall(self.callbacks.onScaleEnd, validatedPercentage, newSize)
-				if not success then
-					warn("MacLib Scale: Error in onScaleEnd callback: " .. tostring(err))
+		tween.Completed:Connect(function(playbackState)
+			-- Only mark as complete if tween finished (not cancelled)
+			if playbackState == Enum.PlaybackState.Completed then
+				self.isScaling = false
+				self.activeTween = nil
+				
+				-- Fire onScaleEnd callback
+				if self.callbacks.onScaleEnd then
+					local success, err = pcall(self.callbacks.onScaleEnd, validatedPercentage, newSize)
+					if not success then
+						warn("MacLib Scale: Error in onScaleEnd callback: " .. tostring(err))
+					end
 				end
+			elseif playbackState == Enum.PlaybackState.Cancelled then
+				-- Tween was cancelled, don't fire onScaleEnd
+				self.isScaling = false
+				self.activeTween = nil
 			end
 		end)
+		
+		return tween
 	end
 
 	-- Get current scale percentage
@@ -261,6 +292,46 @@ function MacLib:Window(Settings)
 	-- Reset scale to default
 	function ScaleController:ResetScale()
 		self:SetScale(self.defaultScale)
+	end
+
+	-- Set animation configuration
+	function ScaleController:SetAnimationConfig(config)
+		if config.duration and type(config.duration) == "number" and config.duration >= 0 then
+			self.animationConfig.duration = config.duration
+		end
+		
+		if config.easingStyle and typeof(config.easingStyle) == "EnumItem" then
+			self.animationConfig.easingStyle = config.easingStyle
+		end
+		
+		if config.easingDirection and typeof(config.easingDirection) == "EnumItem" then
+			self.animationConfig.easingDirection = config.easingDirection
+		end
+	end
+
+	-- Get current animation configuration
+	function ScaleController:GetAnimationConfig()
+		return {
+			duration = self.animationConfig.duration,
+			easingStyle = self.animationConfig.easingStyle,
+			easingDirection = self.animationConfig.easingDirection
+		}
+	end
+
+	-- Check if currently animating
+	function ScaleController:IsAnimating()
+		return self.isScaling
+	end
+
+	-- Cancel active animation
+	function ScaleController:CancelAnimation()
+		if self.activeTween then
+			self.activeTween:Cancel()
+			self.activeTween = nil
+			self.isScaling = false
+			return true
+		end
+		return false
 	end
 
 	-- Initialize screen size detection
@@ -5783,6 +5854,26 @@ function MacLib:Window(Settings)
 	
 	function WindowFunctions:GetCurrentSize()
 		return base.Size
+	end
+
+	-- Set animation configuration for scaling
+	function WindowFunctions:SetAnimationConfig(config)
+		ScaleController:SetAnimationConfig(config)
+	end
+
+	-- Get current animation configuration
+	function WindowFunctions:GetAnimationConfig()
+		return ScaleController:GetAnimationConfig()
+	end
+
+	-- Check if window is currently animating
+	function WindowFunctions:IsAnimating()
+		return ScaleController:IsAnimating()
+	end
+
+	-- Cancel active scaling animation
+	function WindowFunctions:CancelAnimation()
+		return ScaleController:CancelAnimation()
 	end
 
 	-- Resize Controller
