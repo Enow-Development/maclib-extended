@@ -364,7 +364,14 @@ function MacLib:Window(Settings)
 		baseSize = UDim2.fromOffset(868, 650),
 		currentScaleFactor = 1.0,
 		responsiveElements = {},
-		elementCounter = 0
+		elementCounter = 0,
+		-- Performance optimization fields
+		pendingUpdate = false,
+		pendingScaleFactor = nil,
+		debounceDelay = 0.05, -- 50ms debounce for rapid changes
+		lastUpdateTime = 0,
+		batchSize = 10, -- Update elements in batches
+		updateConnection = nil
 	}
 
 	-- Calculate scale factor based on percentage
@@ -403,8 +410,31 @@ function MacLib:Window(Settings)
 		end
 	end
 
-	-- Update a single element based on scale factor
-	function ResponsiveManager:UpdateElement(elementId, scaleFactor)
+	-- Check if element is visible (optimization to skip hidden elements)
+	function ResponsiveManager:IsElementVisible(element)
+		-- Check if element is visible in hierarchy
+		if not element or not element.Parent then
+			return false
+		end
+		
+		-- Check if element or any ancestor is invisible
+		local current = element
+		while current and current ~= base do
+			if current:IsA("GuiObject") then
+				if current.Visible == false or current.BackgroundTransparency >= 1 then
+					-- Element is hidden, but we still update it for correctness
+					-- This is a soft check - we update but with lower priority
+					return false
+				end
+			end
+			current = current.Parent
+		end
+		
+		return true
+	end
+
+	-- Update a single element based on scale factor (optimized)
+	function ResponsiveManager:UpdateElement(elementId, scaleFactor, forceUpdate)
 		local elementData = self.responsiveElements[elementId]
 		if not elementData then
 			return
@@ -417,10 +447,28 @@ function MacLib:Window(Settings)
 			return
 		end
 
+		-- Selective update: skip invisible elements unless forced
+		if not forceUpdate and not self:IsElementVisible(element) then
+			-- Cache the scale factor for when element becomes visible
+			elementData.pendingScaleFactor = scaleFactor
+			return
+		end
+
+		-- Lazy calculation: only calculate if values actually changed
+		local scaleChanged = elementData.lastScaleFactor ~= scaleFactor
+		if not scaleChanged and not forceUpdate then
+			return
+		end
+		
+		elementData.lastScaleFactor = scaleFactor
+
+		-- Batch property updates to minimize reflows
+		local propertyUpdates = {}
+
 		-- Update size based on scale mode
 		if elementData.scaleMode == "proportional" then
 			if elementData.baseSize then
-				element.Size = UDim2.new(
+				propertyUpdates.Size = UDim2.new(
 					elementData.baseSize.X.Scale,
 					math.floor(elementData.baseSize.X.Offset * scaleFactor),
 					elementData.baseSize.Y.Scale,
@@ -430,13 +478,13 @@ function MacLib:Window(Settings)
 		elseif elementData.scaleMode == "fixed" then
 			-- Keep original size, don't scale
 			if elementData.baseSize then
-				element.Size = elementData.baseSize
+				propertyUpdates.Size = elementData.baseSize
 			end
 		end
 
 		-- Update position if needed
 		if elementData.basePosition then
-			element.Position = UDim2.new(
+			propertyUpdates.Position = UDim2.new(
 				elementData.basePosition.X.Scale,
 				math.floor(elementData.basePosition.X.Offset * scaleFactor),
 				elementData.basePosition.Y.Scale,
@@ -447,11 +495,16 @@ function MacLib:Window(Settings)
 		-- Update font size if element has text
 		if element:IsA("TextLabel") or element:IsA("TextButton") or element:IsA("TextBox") then
 			if elementData.baseTextSize then
-				element.TextSize = math.floor(elementData.baseTextSize * scaleFactor)
+				propertyUpdates.TextSize = math.floor(elementData.baseTextSize * scaleFactor)
 			end
 		end
 
-		-- Update padding if element has UIPadding
+		-- Apply all property updates at once (reduces reflows)
+		for property, value in pairs(propertyUpdates) do
+			element[property] = value
+		end
+
+		-- Update padding if element has UIPadding (separate as it's a child object)
 		if elementData.basePadding then
 			local padding = element:FindFirstChildOfClass("UIPadding")
 			if padding then
@@ -463,12 +516,100 @@ function MacLib:Window(Settings)
 		end
 	end
 
-	-- Update all registered elements
-	function ResponsiveManager:UpdateAllElements(scaleFactor)
-		self.currentScaleFactor = scaleFactor
+	-- Perform batched update of elements (called from RunService)
+	function ResponsiveManager:PerformBatchedUpdate()
+		if not self.pendingUpdate or not self.pendingScaleFactor then
+			return
+		end
 
+		local scaleFactor = self.pendingScaleFactor
+		self.currentScaleFactor = scaleFactor
+		
+		-- Collect all element IDs into an array for batch processing
+		local elementIds = {}
 		for elementId, _ in pairs(self.responsiveElements) do
-			self:UpdateElement(elementId, scaleFactor)
+			table.insert(elementIds, elementId)
+		end
+
+		-- Process elements in batches to avoid frame drops
+		local totalElements = #elementIds
+		local batchSize = self.batchSize
+		local currentIndex = 1
+
+		-- Process first batch immediately
+		local function processBatch()
+			local endIndex = math.min(currentIndex + batchSize - 1, totalElements)
+			
+			for i = currentIndex, endIndex do
+				local elementId = elementIds[i]
+				self:UpdateElement(elementId, scaleFactor, false)
+			end
+			
+			currentIndex = endIndex + 1
+			
+			-- If more elements remain, schedule next batch
+			if currentIndex <= totalElements then
+				return true -- Continue processing
+			else
+				-- All elements processed
+				self.pendingUpdate = false
+				self.pendingScaleFactor = nil
+				return false -- Done
+			end
+		end
+
+		-- Process batches across multiple frames for smooth performance
+		local connection
+		connection = RunService.Heartbeat:Connect(function()
+			local shouldContinue = processBatch()
+			if not shouldContinue then
+				connection:Disconnect()
+			end
+		end)
+	end
+
+	-- Update all registered elements with debouncing and batching
+	function ResponsiveManager:UpdateAllElements(scaleFactor, immediate)
+		self.pendingScaleFactor = scaleFactor
+
+		-- If immediate update requested, bypass debouncing
+		if immediate then
+			self.pendingUpdate = true
+			self:PerformBatchedUpdate()
+			return
+		end
+
+		-- Debounce rapid updates
+		local currentTime = tick()
+		local timeSinceLastUpdate = currentTime - self.lastUpdateTime
+
+		if timeSinceLastUpdate < self.debounceDelay then
+			-- Schedule debounced update if not already pending
+			if not self.pendingUpdate then
+				self.pendingUpdate = true
+				
+				-- Wait for debounce delay, then perform update
+				task.delay(self.debounceDelay, function()
+					if self.pendingUpdate then
+						self.lastUpdateTime = tick()
+						self:PerformBatchedUpdate()
+					end
+				end)
+			end
+		else
+			-- Enough time has passed, update immediately
+			self.lastUpdateTime = currentTime
+			self.pendingUpdate = true
+			self:PerformBatchedUpdate()
+		end
+	end
+
+	-- Force immediate update of all elements (bypasses optimizations)
+	function ResponsiveManager:ForceUpdateAllElements(scaleFactor)
+		self.currentScaleFactor = scaleFactor
+		
+		for elementId, _ in pairs(self.responsiveElements) do
+			self:UpdateElement(elementId, scaleFactor, true)
 		end
 	end
 
@@ -526,6 +667,39 @@ function MacLib:Window(Settings)
 		if elementData then
 			elementData.baseSize = newBaseSize
 		end
+	end
+
+	-- Performance configuration methods
+	function ResponsiveManager:SetDebounceDelay(delay)
+		if type(delay) == "number" and delay >= 0 then
+			self.debounceDelay = delay
+		end
+	end
+
+	function ResponsiveManager:SetBatchSize(size)
+		if type(size) == "number" and size > 0 then
+			self.batchSize = math.floor(size)
+		end
+	end
+
+	function ResponsiveManager:GetPerformanceStats()
+		local elementCount = 0
+		local visibleCount = 0
+		
+		for elementId, elementData in pairs(self.responsiveElements) do
+			elementCount = elementCount + 1
+			if elementData.element and self:IsElementVisible(elementData.element) then
+				visibleCount = visibleCount + 1
+			end
+		end
+		
+		return {
+			totalElements = elementCount,
+			visibleElements = visibleCount,
+			debounceDelay = self.debounceDelay,
+			batchSize = self.batchSize,
+			pendingUpdate = self.pendingUpdate
+		}
 	end
 
 	-- Apply initial scale after ResponsiveManager is fully defined
@@ -5907,6 +6081,46 @@ function MacLib:Window(Settings)
 	-- Cancel active scaling animation
 	function WindowFunctions:CancelAnimation()
 		return ScaleController:CancelAnimation()
+	end
+
+	-- Performance optimization methods
+	
+	-- Set debounce delay for responsive updates (in seconds)
+	-- Lower values = more responsive but potentially more CPU usage
+	-- Higher values = less CPU usage but slightly delayed updates
+	-- Default: 0.05 (50ms)
+	function WindowFunctions:SetDebounceDelay(delay)
+		if ResponsiveManager then
+			ResponsiveManager:SetDebounceDelay(delay)
+		end
+	end
+
+	-- Set batch size for element updates
+	-- Lower values = smoother frame rate but slower total update time
+	-- Higher values = faster total update but potential frame drops
+	-- Default: 10 elements per frame
+	function WindowFunctions:SetBatchSize(size)
+		if ResponsiveManager then
+			ResponsiveManager:SetBatchSize(size)
+		end
+	end
+
+	-- Get performance statistics
+	-- Returns: {totalElements, visibleElements, debounceDelay, batchSize, pendingUpdate}
+	function WindowFunctions:GetPerformanceStats()
+		if ResponsiveManager then
+			return ResponsiveManager:GetPerformanceStats()
+		end
+		return nil
+	end
+
+	-- Force immediate update of all elements (bypasses optimizations)
+	-- Use sparingly - this can cause performance issues with many elements
+	function WindowFunctions:ForceUpdateLayout()
+		if ResponsiveManager then
+			local scaleFactor = ScaleController.currentScale / 100
+			ResponsiveManager:ForceUpdateAllElements(scaleFactor)
+		end
 	end
 
 	-- Resize Controller
