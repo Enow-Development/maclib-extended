@@ -1527,6 +1527,7 @@ function MacLib:Window(Settings)
 			columnsContainer.BorderColor3 = Color3.fromRGB(0, 0, 0)
 			columnsContainer.BorderSizePixel = 0
 			columnsContainer.Size = UDim2.fromScale(1, 0)
+			columnsContainer.LayoutOrder = 0
 
 			local columnsContainerUIListLayout = Instance.new("UIListLayout")
 			columnsContainerUIListLayout.Name = "ColumnsContainerUIListLayout"
@@ -1593,6 +1594,9 @@ function MacLib:Window(Settings)
 
 			elementsScrolling.Parent = elements1
 
+			-- Section order counter for tracking creation order
+			local sectionOrderCounter = 0
+
 			function TabFunctions:Section(Settings)
 				local SectionFunctions = {}
 				local section = Instance.new("Frame")
@@ -1616,6 +1620,11 @@ function MacLib:Window(Settings)
 					-- Default to left for nil, "Left", or any invalid value
 					parent = left
 				end
+				
+				-- Assign LayoutOrder to preserve creation order
+				sectionOrderCounter = sectionOrderCounter + 1
+				section.LayoutOrder = sectionOrderCounter
+				
 				section.Parent = parent
 
 				local sectionUICorner = Instance.new("UICorner")
