@@ -282,6 +282,175 @@ function MacLib:Window(Settings)
 		ScaleController:SetScale(Settings.DefaultScale)
 	end
 
+	-- ResponsiveManager Module
+	local ResponsiveManager = {
+		baseSize = UDim2.fromOffset(868, 650),
+		currentScaleFactor = 1.0,
+		responsiveElements = {},
+		elementCounter = 0
+	}
+
+	-- Calculate scale factor based on percentage
+	function ResponsiveManager:CalculateScaleFactor(percentage)
+		return percentage / 100
+	end
+
+	-- Register a responsive element with its base properties
+	function ResponsiveManager:RegisterElement(element, elementType, baseProperties)
+		if not element or not element:IsA("GuiObject") then
+			warn("MacLib ResponsiveManager: Invalid element provided for registration")
+			return nil
+		end
+
+		self.elementCounter = self.elementCounter + 1
+		local elementId = "element_" .. self.elementCounter
+
+		self.responsiveElements[elementId] = {
+			element = element,
+			elementType = elementType or "generic",
+			baseSize = baseProperties.baseSize or element.Size,
+			basePosition = baseProperties.basePosition or element.Position,
+			baseFontSize = baseProperties.baseFontSize,
+			baseTextSize = baseProperties.baseTextSize,
+			basePadding = baseProperties.basePadding,
+			scaleMode = baseProperties.scaleMode or "proportional"
+		}
+
+		return elementId
+	end
+
+	-- Unregister an element (cleanup when element is destroyed)
+	function ResponsiveManager:UnregisterElement(elementId)
+		if self.responsiveElements[elementId] then
+			self.responsiveElements[elementId] = nil
+		end
+	end
+
+	-- Update a single element based on scale factor
+	function ResponsiveManager:UpdateElement(elementId, scaleFactor)
+		local elementData = self.responsiveElements[elementId]
+		if not elementData then
+			return
+		end
+
+		local element = elementData.element
+		if not element or not element.Parent then
+			-- Element was destroyed, clean up
+			self:UnregisterElement(elementId)
+			return
+		end
+
+		-- Update size based on scale mode
+		if elementData.scaleMode == "proportional" then
+			if elementData.baseSize then
+				element.Size = UDim2.new(
+					elementData.baseSize.X.Scale,
+					math.floor(elementData.baseSize.X.Offset * scaleFactor),
+					elementData.baseSize.Y.Scale,
+					math.floor(elementData.baseSize.Y.Offset * scaleFactor)
+				)
+			end
+		elseif elementData.scaleMode == "fixed" then
+			-- Keep original size, don't scale
+			if elementData.baseSize then
+				element.Size = elementData.baseSize
+			end
+		end
+
+		-- Update position if needed
+		if elementData.basePosition then
+			element.Position = UDim2.new(
+				elementData.basePosition.X.Scale,
+				math.floor(elementData.basePosition.X.Offset * scaleFactor),
+				elementData.basePosition.Y.Scale,
+				math.floor(elementData.basePosition.Y.Offset * scaleFactor)
+			)
+		end
+
+		-- Update font size if element has text
+		if element:IsA("TextLabel") or element:IsA("TextButton") or element:IsA("TextBox") then
+			if elementData.baseTextSize then
+				element.TextSize = math.floor(elementData.baseTextSize * scaleFactor)
+			end
+		end
+
+		-- Update padding if element has UIPadding
+		if elementData.basePadding then
+			local padding = element:FindFirstChildOfClass("UIPadding")
+			if padding then
+				padding.PaddingTop = UDim.new(0, math.floor(elementData.basePadding.Top * scaleFactor))
+				padding.PaddingBottom = UDim.new(0, math.floor(elementData.basePadding.Bottom * scaleFactor))
+				padding.PaddingLeft = UDim.new(0, math.floor(elementData.basePadding.Left * scaleFactor))
+				padding.PaddingRight = UDim.new(0, math.floor(elementData.basePadding.Right * scaleFactor))
+			end
+		end
+	end
+
+	-- Update all registered elements
+	function ResponsiveManager:UpdateAllElements(scaleFactor)
+		self.currentScaleFactor = scaleFactor
+
+		for elementId, _ in pairs(self.responsiveElements) do
+			self:UpdateElement(elementId, scaleFactor)
+		end
+	end
+
+	-- Update sidebar with proportional width scaling
+	function ResponsiveManager:UpdateSidebar(scaleFactor, sidebarElement)
+		if not sidebarElement then
+			return
+		end
+
+		-- Sidebar maintains its scale ratio
+		-- The sidebar width is already proportional via UDim2.fromScale
+		-- But we can adjust specific elements within if needed
+	end
+
+	-- Update content area scaling
+	function ResponsiveManager:UpdateContent(scaleFactor, contentElement)
+		if not contentElement then
+			return
+		end
+
+		-- Content area adjusts automatically based on sidebar
+		-- Additional scaling logic can be added here if needed
+	end
+
+	-- Update font sizes for all text elements
+	function ResponsiveManager:UpdateFontSizes(scaleFactor)
+		for elementId, elementData in pairs(self.responsiveElements) do
+			if elementData.baseTextSize then
+				self:UpdateElement(elementId, scaleFactor)
+			end
+		end
+	end
+
+	-- Update spacing (padding and margins) for elements
+	function ResponsiveManager:UpdateSpacing(scaleFactor)
+		for elementId, elementData in pairs(self.responsiveElements) do
+			if elementData.basePadding then
+				self:UpdateElement(elementId, scaleFactor)
+			end
+		end
+	end
+
+	-- Get base size for an element
+	function ResponsiveManager:GetElementBaseSize(elementId)
+		local elementData = self.responsiveElements[elementId]
+		if elementData then
+			return elementData.baseSize
+		end
+		return nil
+	end
+
+	-- Update base size for an element (useful when element changes)
+	function ResponsiveManager:UpdateElementBaseSize(elementId, newBaseSize)
+		local elementData = self.responsiveElements[elementId]
+		if elementData then
+			elementData.baseSize = newBaseSize
+		end
+	end
+
 	local sidebar = Instance.new("Frame")
 	sidebar.Name = "Sidebar"
 	sidebar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
