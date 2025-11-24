@@ -129,6 +129,95 @@ function MacLib:Window(Settings)
 	baseUIStroke.Transparency = 0.9
 	baseUIStroke.Parent = base
 
+	-- Validate Settings input
+	local function ValidateSettings()
+		-- Validate DefaultScale
+		if Settings.DefaultScale ~= nil then
+			if type(Settings.DefaultScale) ~= "number" then
+				warn("MacLib: Invalid DefaultScale type. Expected number, got " .. type(Settings.DefaultScale) .. ". Using default 75%")
+				Settings.DefaultScale = nil
+			elseif Settings.DefaultScale < 50 or Settings.DefaultScale > 100 then
+				warn("MacLib: DefaultScale must be between 50 and 100. Got " .. Settings.DefaultScale .. ". Clamping to valid range.")
+				Settings.DefaultScale = math.clamp(Settings.DefaultScale, 50, 100)
+			end
+		end
+		
+		-- Validate MinScale
+		if Settings.MinScale ~= nil then
+			if type(Settings.MinScale) ~= "number" then
+				warn("MacLib: Invalid MinScale type. Expected number, got " .. type(Settings.MinScale) .. ". Using default 50%")
+				Settings.MinScale = nil
+			elseif Settings.MinScale < 10 or Settings.MinScale > 100 then
+				warn("MacLib: MinScale must be between 10 and 100. Got " .. Settings.MinScale .. ". Clamping to valid range.")
+				Settings.MinScale = math.clamp(Settings.MinScale, 10, 100)
+			end
+		end
+		
+		-- Validate MaxScale
+		if Settings.MaxScale ~= nil then
+			if type(Settings.MaxScale) ~= "number" then
+				warn("MacLib: Invalid MaxScale type. Expected number, got " .. type(Settings.MaxScale) .. ". Using default 100%")
+				Settings.MaxScale = nil
+			elseif Settings.MaxScale < 50 or Settings.MaxScale > 200 then
+				warn("MacLib: MaxScale must be between 50 and 200. Got " .. Settings.MaxScale .. ". Clamping to valid range.")
+				Settings.MaxScale = math.clamp(Settings.MaxScale, 50, 200)
+			end
+		end
+		
+		-- Validate MinScale <= MaxScale
+		local minScale = Settings.MinScale or 50
+		local maxScale = Settings.MaxScale or 100
+		if minScale > maxScale then
+			warn("MacLib: MinScale (" .. minScale .. ") cannot be greater than MaxScale (" .. maxScale .. "). Swapping values.")
+			Settings.MinScale = maxScale
+			Settings.MaxScale = minScale
+		end
+		
+		-- Validate callbacks
+		if Settings.onScaleStart ~= nil and type(Settings.onScaleStart) ~= "function" then
+			warn("MacLib: onScaleStart must be a function. Got " .. type(Settings.onScaleStart) .. ". Ignoring callback.")
+			Settings.onScaleStart = nil
+		end
+		
+		if Settings.onScale ~= nil and type(Settings.onScale) ~= "function" then
+			warn("MacLib: onScale must be a function. Got " .. type(Settings.onScale) .. ". Ignoring callback.")
+			Settings.onScale = nil
+		end
+		
+		if Settings.onScaleEnd ~= nil and type(Settings.onScaleEnd) ~= "function" then
+			warn("MacLib: onScaleEnd must be a function. Got " .. type(Settings.onScaleEnd) .. ". Ignoring callback.")
+			Settings.onScaleEnd = nil
+		end
+		
+		-- Validate AnimationDuration
+		if Settings.AnimationDuration ~= nil then
+			if type(Settings.AnimationDuration) ~= "number" then
+				warn("MacLib: Invalid AnimationDuration type. Expected number, got " .. type(Settings.AnimationDuration) .. ". Using default 0.3")
+				Settings.AnimationDuration = nil
+			elseif Settings.AnimationDuration < 0 then
+				warn("MacLib: AnimationDuration cannot be negative. Got " .. Settings.AnimationDuration .. ". Using absolute value.")
+				Settings.AnimationDuration = math.abs(Settings.AnimationDuration)
+			elseif Settings.AnimationDuration > 5 then
+				warn("MacLib: AnimationDuration is very long (" .. Settings.AnimationDuration .. " seconds). Consider using a shorter duration for better UX.")
+			end
+		end
+		
+		-- Validate AnimationEasingStyle
+		if Settings.AnimationEasingStyle ~= nil and typeof(Settings.AnimationEasingStyle) ~= "EnumItem" then
+			warn("MacLib: Invalid AnimationEasingStyle. Expected Enum.EasingStyle, got " .. typeof(Settings.AnimationEasingStyle) .. ". Using default Quad.")
+			Settings.AnimationEasingStyle = nil
+		end
+		
+		-- Validate AnimationEasingDirection
+		if Settings.AnimationEasingDirection ~= nil and typeof(Settings.AnimationEasingDirection) ~= "EnumItem" then
+			warn("MacLib: Invalid AnimationEasingDirection. Expected Enum.EasingDirection, got " .. typeof(Settings.AnimationEasingDirection) .. ". Using default Out.")
+			Settings.AnimationEasingDirection = nil
+		end
+	end
+	
+	-- Run validation
+	ValidateSettings()
+
 	-- ScaleController Module
 	local ScaleController = {
 		currentScale = Settings.DefaultScale or 75,
@@ -163,12 +252,34 @@ function MacLib:Window(Settings)
 	-- Validate scale percentage (50%-100%)
 	function ScaleController:ValidateScale(percentage)
 		if type(percentage) ~= "number" then
-			warn("MacLib Scale: Invalid scale percentage type. Expected number, got " .. type(percentage))
+			warn("MacLib Scale: Invalid scale percentage type. Expected number, got " .. type(percentage) .. ". Using current scale: " .. self.currentScale .. "%")
 			return self.currentScale
 		end
 		
+		-- Check for NaN
+		if percentage ~= percentage then
+			warn("MacLib Scale: Scale percentage is NaN (Not a Number). Using current scale: " .. self.currentScale .. "%")
+			return self.currentScale
+		end
+		
+		-- Check for infinity
+		if percentage == math.huge or percentage == -math.huge then
+			warn("MacLib Scale: Scale percentage cannot be infinite. Using current scale: " .. self.currentScale .. "%")
+			return self.currentScale
+		end
+		
+		local originalPercentage = percentage
+		
 		-- Clamp to min/max bounds
 		local clamped = math.clamp(percentage, self.minScale, self.maxScale)
+		
+		if clamped ~= originalPercentage then
+			if originalPercentage < self.minScale then
+				warn("MacLib Scale: Scale percentage " .. originalPercentage .. "% is below minimum " .. self.minScale .. "%. Clamping to " .. clamped .. "%")
+			elseif originalPercentage > self.maxScale then
+				warn("MacLib Scale: Scale percentage " .. originalPercentage .. "% is above maximum " .. self.maxScale .. "%. Clamping to " .. clamped .. "%")
+			end
+		end
 		
 		-- Also clamp to screen size (100% of screen)
 		local screenSize = self:DetectScreenSize()
@@ -177,9 +288,13 @@ function MacLib:Window(Settings)
 			(screenSize.Y / self.baseSize.Y) * 100
 		)
 		
-		clamped = math.min(clamped, maxScreenScale)
+		local finalClamped = math.min(clamped, maxScreenScale)
 		
-		return clamped
+		if finalClamped ~= clamped then
+			warn("MacLib Scale: Scale percentage " .. clamped .. "% exceeds screen size limit. Clamping to " .. math.floor(finalClamped) .. "% to fit screen.")
+		end
+		
+		return finalClamped
 	end
 
 	-- Calculate actual window size from percentage
@@ -201,7 +316,19 @@ function MacLib:Window(Settings)
 
 	-- Set scale to specified percentage
 	function ScaleController:SetScale(percentage, animationOverride)
+		-- Validate base frame still exists
+		if not base or not base.Parent then
+			warn("MacLib Scale: Cannot set scale - window has been destroyed")
+			return nil
+		end
+		
 		local validatedPercentage = self:ValidateScale(percentage)
+		
+		-- If validation returned current scale due to invalid input, check if we should proceed
+		if validatedPercentage == self.currentScale and percentage ~= self.currentScale then
+			-- Input was invalid and we're already at the fallback scale, no need to animate
+			return nil
+		end
 		
 		-- Cancel active tween if one exists (allows interrupting animations)
 		if self.activeTween then
@@ -235,19 +362,42 @@ function MacLib:Window(Settings)
 			end
 		end
 		
+		-- Validate animation override if provided
+		if animationOverride ~= nil then
+			if type(animationOverride) ~= "table" then
+				warn("MacLib Scale: Invalid animationOverride type. Expected table, got " .. type(animationOverride) .. ". Using default animation config.")
+				animationOverride = nil
+			end
+		end
+		
 		-- Use animation override if provided, otherwise use default config
 		local animConfig = animationOverride or self.animationConfig
 		
+		-- Validate animation config values
+		local duration = animConfig.duration
+		if type(duration) ~= "number" or duration < 0 then
+			warn("MacLib Scale: Invalid animation duration. Using default 0.3 seconds.")
+			duration = 0.3
+		end
+		
 		-- Apply size with smooth animation using configurable settings
 		local tweenInfo = TweenInfo.new(
-			animConfig.duration,
-			animConfig.easingStyle,
-			animConfig.easingDirection
+			duration,
+			animConfig.easingStyle or Enum.EasingStyle.Quad,
+			animConfig.easingDirection or Enum.EasingDirection.Out
 		)
 		
-		local tween = Tween(base, tweenInfo, {
-			Size = newSize
-		})
+		local success, tween = pcall(function()
+			return Tween(base, tweenInfo, {
+				Size = newSize
+			})
+		end)
+		
+		if not success then
+			warn("MacLib Scale: Error creating tween: " .. tostring(tween))
+			self.isScaling = false
+			return nil
+		end
 		
 		self.activeTween = tween
 		tween:Play()
@@ -258,7 +408,12 @@ function MacLib:Window(Settings)
 		-- Update ResponsiveManager with new scale factor
 		-- This will trigger updates for all registered responsive elements
 		if ResponsiveManager then
-			ResponsiveManager:UpdateAllElements(scaleFactor)
+			local updateSuccess, updateErr = pcall(function()
+				ResponsiveManager:UpdateAllElements(scaleFactor)
+			end)
+			if not updateSuccess then
+				warn("MacLib Scale: Error updating responsive elements: " .. tostring(updateErr))
+			end
 		end
 		
 		tween.Completed:Connect(function(playbackState)
@@ -286,31 +441,82 @@ function MacLib:Window(Settings)
 
 	-- Get current scale percentage
 	function ScaleController:GetScale()
+		-- Validate currentScale is still valid
+		if type(self.currentScale) ~= "number" then
+			warn("MacLib GetScale: currentScale is corrupted. Returning default 75%")
+			self.currentScale = 75
+		end
 		return self.currentScale
 	end
 
 	-- Get detected screen size
 	function ScaleController:GetScreenSize()
+		-- Validate screenSize is still valid
+		if typeof(self.screenSize) ~= "Vector2" then
+			warn("MacLib GetScreenSize: screenSize is corrupted. Re-detecting screen size.")
+			self:DetectScreenSize()
+		end
 		return self.screenSize
 	end
 
 	-- Reset scale to default
 	function ScaleController:ResetScale()
+		-- Validate base frame still exists
+		if not base or not base.Parent then
+			warn("MacLib ResetScale: Cannot reset scale - window has been destroyed")
+			return
+		end
+		
+		-- Validate defaultScale is still valid
+		if type(self.defaultScale) ~= "number" then
+			warn("MacLib ResetScale: Invalid defaultScale type. Expected number, got " .. type(self.defaultScale) .. ". Using 75%")
+			self.defaultScale = 75
+		end
+		
 		self:SetScale(self.defaultScale)
 	end
 
 	-- Set animation configuration
 	function ScaleController:SetAnimationConfig(config)
-		if config.duration and type(config.duration) == "number" and config.duration >= 0 then
-			self.animationConfig.duration = config.duration
+		-- Validate config is a table
+		if type(config) ~= "table" then
+			warn("MacLib SetAnimationConfig: Invalid config type. Expected table, got " .. type(config))
+			return
 		end
 		
-		if config.easingStyle and typeof(config.easingStyle) == "EnumItem" then
-			self.animationConfig.easingStyle = config.easingStyle
+		-- Validate duration
+		if config.duration ~= nil then
+			if type(config.duration) == "number" then
+				if config.duration < 0 then
+					warn("MacLib SetAnimationConfig: Animation duration cannot be negative. Got " .. config.duration .. ". Using absolute value.")
+					self.animationConfig.duration = math.abs(config.duration)
+				elseif config.duration > 10 then
+					warn("MacLib SetAnimationConfig: Animation duration is very long (" .. config.duration .. " seconds). Consider using a shorter duration.")
+					self.animationConfig.duration = config.duration
+				else
+					self.animationConfig.duration = config.duration
+				end
+			else
+				warn("MacLib SetAnimationConfig: Invalid duration type. Expected number, got " .. type(config.duration))
+			end
 		end
 		
-		if config.easingDirection and typeof(config.easingDirection) == "EnumItem" then
-			self.animationConfig.easingDirection = config.easingDirection
+		-- Validate easingStyle
+		if config.easingStyle ~= nil then
+			if typeof(config.easingStyle) == "EnumItem" then
+				self.animationConfig.easingStyle = config.easingStyle
+			else
+				warn("MacLib SetAnimationConfig: Invalid easingStyle. Expected Enum.EasingStyle, got " .. typeof(config.easingStyle))
+			end
+		end
+		
+		-- Validate easingDirection
+		if config.easingDirection ~= nil then
+			if typeof(config.easingDirection) == "EnumItem" then
+				self.animationConfig.easingDirection = config.easingDirection
+			else
+				warn("MacLib SetAnimationConfig: Invalid easingDirection. Expected Enum.EasingDirection, got " .. typeof(config.easingDirection))
+			end
 		end
 	end
 
@@ -374,10 +580,29 @@ function MacLib:Window(Settings)
 
 	-- Register a responsive element with its base properties
 	function ResponsiveManager:RegisterElement(element, elementType, baseProperties)
-		if not element or not element:IsA("GuiObject") then
-			warn("MacLib ResponsiveManager: Invalid element provided for registration")
+		-- Validate element
+		if not element then
+			warn("MacLib ResponsiveManager: Cannot register nil element")
 			return nil
 		end
+		
+		if not element:IsA("GuiObject") then
+			warn("MacLib ResponsiveManager: Invalid element type. Expected GuiObject, got " .. element.ClassName)
+			return nil
+		end
+		
+		if not element.Parent then
+			warn("MacLib ResponsiveManager: Cannot register element without parent (element may be destroyed)")
+			return nil
+		end
+		
+		-- Validate baseProperties
+		if baseProperties and type(baseProperties) ~= "table" then
+			warn("MacLib ResponsiveManager: Invalid baseProperties type. Expected table, got " .. type(baseProperties) .. ". Using defaults.")
+			baseProperties = {}
+		end
+		
+		baseProperties = baseProperties or {}
 
 		self.elementCounter = self.elementCounter + 1
 		local elementId = "element_" .. self.elementCounter
@@ -392,6 +617,14 @@ function MacLib:Window(Settings)
 			basePadding = baseProperties.basePadding,
 			scaleMode = baseProperties.scaleMode or "proportional"
 		}
+		
+		-- Set up cleanup when element is destroyed
+		element.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				-- Element was removed from hierarchy, clean up
+				self:UnregisterElement(elementId)
+			end
+		end)
 
 		return elementId
 	end
@@ -405,6 +638,17 @@ function MacLib:Window(Settings)
 
 	-- Update a single element based on scale factor
 	function ResponsiveManager:UpdateElement(elementId, scaleFactor)
+		-- Validate inputs
+		if type(scaleFactor) ~= "number" then
+			warn("MacLib ResponsiveManager: Invalid scaleFactor type. Expected number, got " .. type(scaleFactor))
+			return
+		end
+		
+		if scaleFactor <= 0 then
+			warn("MacLib ResponsiveManager: scaleFactor must be positive. Got " .. scaleFactor)
+			return
+		end
+		
 		local elementData = self.responsiveElements[elementId]
 		if not elementData then
 			return
@@ -416,58 +660,89 @@ function MacLib:Window(Settings)
 			self:UnregisterElement(elementId)
 			return
 		end
+		
+		-- Wrap updates in pcall to handle any unexpected errors
+		local success, err = pcall(function()
+			-- Update size based on scale mode
+			if elementData.scaleMode == "proportional" then
+				if elementData.baseSize then
+					element.Size = UDim2.new(
+						elementData.baseSize.X.Scale,
+						math.floor(elementData.baseSize.X.Offset * scaleFactor),
+						elementData.baseSize.Y.Scale,
+						math.floor(elementData.baseSize.Y.Offset * scaleFactor)
+					)
+				end
+			elseif elementData.scaleMode == "fixed" then
+				-- Keep original size, don't scale
+				if elementData.baseSize then
+					element.Size = elementData.baseSize
+				end
+			end
 
-		-- Update size based on scale mode
-		if elementData.scaleMode == "proportional" then
-			if elementData.baseSize then
-				element.Size = UDim2.new(
-					elementData.baseSize.X.Scale,
-					math.floor(elementData.baseSize.X.Offset * scaleFactor),
-					elementData.baseSize.Y.Scale,
-					math.floor(elementData.baseSize.Y.Offset * scaleFactor)
+			-- Update position if needed
+			if elementData.basePosition then
+				element.Position = UDim2.new(
+					elementData.basePosition.X.Scale,
+					math.floor(elementData.basePosition.X.Offset * scaleFactor),
+					elementData.basePosition.Y.Scale,
+					math.floor(elementData.basePosition.Y.Offset * scaleFactor)
 				)
 			end
-		elseif elementData.scaleMode == "fixed" then
-			-- Keep original size, don't scale
-			if elementData.baseSize then
-				element.Size = elementData.baseSize
-			end
-		end
 
-		-- Update position if needed
-		if elementData.basePosition then
-			element.Position = UDim2.new(
-				elementData.basePosition.X.Scale,
-				math.floor(elementData.basePosition.X.Offset * scaleFactor),
-				elementData.basePosition.Y.Scale,
-				math.floor(elementData.basePosition.Y.Offset * scaleFactor)
-			)
-		end
-
-		-- Update font size if element has text
-		if element:IsA("TextLabel") or element:IsA("TextButton") or element:IsA("TextBox") then
-			if elementData.baseTextSize then
-				element.TextSize = math.floor(elementData.baseTextSize * scaleFactor)
+			-- Update font size if element has text
+			if element:IsA("TextLabel") or element:IsA("TextButton") or element:IsA("TextBox") then
+				if elementData.baseTextSize then
+					element.TextSize = math.floor(elementData.baseTextSize * scaleFactor)
+				end
 			end
-		end
 
-		-- Update padding if element has UIPadding
-		if elementData.basePadding then
-			local padding = element:FindFirstChildOfClass("UIPadding")
-			if padding then
-				padding.PaddingTop = UDim.new(0, math.floor(elementData.basePadding.Top * scaleFactor))
-				padding.PaddingBottom = UDim.new(0, math.floor(elementData.basePadding.Bottom * scaleFactor))
-				padding.PaddingLeft = UDim.new(0, math.floor(elementData.basePadding.Left * scaleFactor))
-				padding.PaddingRight = UDim.new(0, math.floor(elementData.basePadding.Right * scaleFactor))
+			-- Update padding if element has UIPadding
+			if elementData.basePadding then
+				local padding = element:FindFirstChildOfClass("UIPadding")
+				if padding then
+					padding.PaddingTop = UDim.new(0, math.floor(elementData.basePadding.Top * scaleFactor))
+					padding.PaddingBottom = UDim.new(0, math.floor(elementData.basePadding.Bottom * scaleFactor))
+					padding.PaddingLeft = UDim.new(0, math.floor(elementData.basePadding.Left * scaleFactor))
+					padding.PaddingRight = UDim.new(0, math.floor(elementData.basePadding.Right * scaleFactor))
+				end
 			end
+		end)
+		
+		if not success then
+			warn("MacLib ResponsiveManager: Error updating element " .. elementId .. ": " .. tostring(err))
+			-- Clean up the problematic element
+			self:UnregisterElement(elementId)
 		end
 	end
 
 	-- Update all registered elements
 	function ResponsiveManager:UpdateAllElements(scaleFactor)
+		-- Validate scaleFactor
+		if type(scaleFactor) ~= "number" then
+			warn("MacLib ResponsiveManager: Invalid scaleFactor type in UpdateAllElements. Expected number, got " .. type(scaleFactor))
+			return
+		end
+		
+		if scaleFactor <= 0 then
+			warn("MacLib ResponsiveManager: scaleFactor must be positive in UpdateAllElements. Got " .. scaleFactor)
+			return
+		end
+		
+		if scaleFactor ~= scaleFactor then -- Check for NaN
+			warn("MacLib ResponsiveManager: scaleFactor is NaN in UpdateAllElements")
+			return
+		end
+		
 		self.currentScaleFactor = scaleFactor
 
+		-- Create a copy of element IDs to avoid issues if elements are removed during iteration
+		local elementIds = {}
 		for elementId, _ in pairs(self.responsiveElements) do
+			table.insert(elementIds, elementId)
+		end
+		
+		for _, elementId in ipairs(elementIds) do
 			self:UpdateElement(elementId, scaleFactor)
 		end
 	end
@@ -5870,6 +6145,33 @@ function MacLib:Window(Settings)
 	end
 
 	function WindowFunctions:SetScale(percentage)
+		-- Validate input
+		if percentage == nil then
+			warn("MacLib SetScale: Scale percentage cannot be nil. Using current scale.")
+			return
+		end
+		
+		if type(percentage) ~= "number" then
+			warn("MacLib SetScale: Invalid scale percentage type. Expected number, got " .. type(percentage) .. ". Using current scale.")
+			return
+		end
+		
+		if percentage ~= percentage then -- Check for NaN
+			warn("MacLib SetScale: Scale percentage is NaN (Not a Number). Using current scale.")
+			return
+		end
+		
+		if percentage == math.huge or percentage == -math.huge then
+			warn("MacLib SetScale: Scale percentage cannot be infinite. Using current scale.")
+			return
+		end
+		
+		-- Validate base frame still exists
+		if not base or not base.Parent then
+			warn("MacLib SetScale: Window has been destroyed. Cannot set scale.")
+			return
+		end
+		
 		ScaleController:SetScale(percentage)
 	end
 	
