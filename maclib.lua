@@ -214,6 +214,9 @@ function MacLib:Window(Settings)
 		-- Calculate new size
 		local newSize = self:CalculateSize(validatedPercentage)
 		
+		-- Calculate scale factor for ResponsiveManager
+		local scaleFactor = ResponsiveManager:CalculateScaleFactor(validatedPercentage)
+		
 		-- Update current scale
 		self.currentScale = validatedPercentage
 		
@@ -230,6 +233,11 @@ function MacLib:Window(Settings)
 			Size = newSize
 		})
 		tween:Play()
+		
+		-- Update all UI elements proportionally
+		ResponsiveManager:UpdateAllElements(scaleFactor)
+		ResponsiveManager:UpdateSidebar(scaleFactor, sidebar)
+		ResponsiveManager:UpdateContent(scaleFactor, content)
 		
 		tween.Completed:Connect(function()
 			self.isScaling = false
