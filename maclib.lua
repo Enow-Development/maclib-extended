@@ -252,9 +252,14 @@ function MacLib:Window(Settings)
 		self.activeTween = tween
 		tween:Play()
 		
-		-- Note: ResponsiveManager integration will be added in future updates
-		-- For now, scaling only affects the base window size
-		-- UI elements will scale automatically via UDim2.fromScale properties
+		-- Calculate scale factor for ResponsiveManager
+		local scaleFactor = validatedPercentage / 100
+		
+		-- Update ResponsiveManager with new scale factor
+		-- This will trigger updates for all registered responsive elements
+		if ResponsiveManager then
+			ResponsiveManager:UpdateAllElements(scaleFactor)
+		end
 		
 		tween.Completed:Connect(function(playbackState)
 			-- Only mark as complete if tween finished (not cancelled)
@@ -352,17 +357,9 @@ function MacLib:Window(Settings)
 		end
 	end)
 
-	-- Apply initial scale
-	-- Always apply the scale to ensure window starts at correct size
-	-- This handles both explicit DefaultScale and the default 75%
-	if Settings.DefaultScale then
-		ScaleController:SetScale(Settings.DefaultScale)
-	else
-		-- Apply default 75% scale for backward compatibility
-		ScaleController:SetScale(75)
-	end
-
 	-- ResponsiveManager Module
+	-- Define ResponsiveManager BEFORE applying initial scale
+	-- so that the initial scale can trigger responsive updates
 	local ResponsiveManager = {
 		baseSize = UDim2.fromOffset(868, 650),
 		currentScaleFactor = 1.0,
@@ -529,6 +526,17 @@ function MacLib:Window(Settings)
 		if elementData then
 			elementData.baseSize = newBaseSize
 		end
+	end
+
+	-- Apply initial scale after ResponsiveManager is fully defined
+	-- This ensures the initial scale triggers responsive updates
+	-- Always apply the scale to ensure window starts at correct size
+	-- This handles both explicit DefaultScale and the default 75%
+	if Settings.DefaultScale then
+		ScaleController:SetScale(Settings.DefaultScale)
+	else
+		-- Apply default 75% scale for backward compatibility
+		ScaleController:SetScale(75)
 	end
 
 	local sidebar = Instance.new("Frame")
@@ -1058,6 +1066,13 @@ function MacLib:Window(Settings)
 	local snapRange = 20
 	local minSidebarWidth = 107
 	local maxSidebarWidth = base.AbsoluteSize.X - minSidebarWidth
+	
+	-- Update sidebar constraints when base size changes (due to scaling)
+	base:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		maxSidebarWidth = base.AbsoluteSize.X - minSidebarWidth
+		-- Update content size to match new base size
+		content.Size = UDim2.new(0, base.AbsoluteSize.X - sidebar.AbsoluteSize.X, 1, 0)
+	end)
 
 	local TweenSettings = {
 		DefaultTransparency = 0.9,
@@ -2073,6 +2088,19 @@ function MacLib:Window(Settings)
 				sectionUIPadding.PaddingRight = UDim.new(0, 18)
 				sectionUIPadding.PaddingTop = UDim.new(0, 22)
 				sectionUIPadding.Parent = section
+				
+				-- Register section with ResponsiveManager for padding scaling
+				if ResponsiveManager then
+					ResponsiveManager:RegisterElement(section, "section", {
+						basePadding = {
+							Top = 22,
+							Bottom = 20,
+							Left = 20,
+							Right = 18
+						},
+						scaleMode = "proportional"
+					})
+				end
 
 				function SectionFunctions:Button(Settings, Flag)
 					local ButtonFunctions = {Settings = Settings}
