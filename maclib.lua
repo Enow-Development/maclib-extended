@@ -1620,6 +1620,7 @@ function MacLib:Window(Settings)
 
 				local sectionUICorner = Instance.new("UICorner")
 				sectionUICorner.Name = "SectionUICorner"
+				sectionUICorner.CornerRadius = UDim.new(0, 8)
 				sectionUICorner.Parent = section
 
 				local sectionUIStroke = Instance.new("UIStroke")
