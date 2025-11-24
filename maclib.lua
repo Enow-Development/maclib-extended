@@ -352,9 +352,14 @@ function MacLib:Window(Settings)
 		end
 	end)
 
-	-- Apply initial scale if DefaultScale is specified
-	if Settings.DefaultScale and Settings.DefaultScale ~= 75 then
+	-- Apply initial scale
+	-- Always apply the scale to ensure window starts at correct size
+	-- This handles both explicit DefaultScale and the default 75%
+	if Settings.DefaultScale then
 		ScaleController:SetScale(Settings.DefaultScale)
+	else
+		-- Apply default 75% scale for backward compatibility
+		ScaleController:SetScale(75)
 	end
 
 	-- ResponsiveManager Module
