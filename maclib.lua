@@ -214,9 +214,6 @@ function MacLib:Window(Settings)
 		-- Calculate new size
 		local newSize = self:CalculateSize(validatedPercentage)
 		
-		-- Calculate scale factor for ResponsiveManager
-		local scaleFactor = ResponsiveManager:CalculateScaleFactor(validatedPercentage)
-		
 		-- Update current scale
 		self.currentScale = validatedPercentage
 		
@@ -234,10 +231,9 @@ function MacLib:Window(Settings)
 		})
 		tween:Play()
 		
-		-- Update all UI elements proportionally
-		ResponsiveManager:UpdateAllElements(scaleFactor)
-		ResponsiveManager:UpdateSidebar(scaleFactor, sidebar)
-		ResponsiveManager:UpdateContent(scaleFactor, content)
+		-- Note: ResponsiveManager integration will be added in future updates
+		-- For now, scaling only affects the base window size
+		-- UI elements will scale automatically via UDim2.fromScale properties
 		
 		tween.Completed:Connect(function()
 			self.isScaling = false
