@@ -129,6 +129,159 @@ function MacLib:Window(Settings)
 	baseUIStroke.Transparency = 0.9
 	baseUIStroke.Parent = base
 
+	-- ScaleController Module
+	local ScaleController = {
+		currentScale = Settings.DefaultScale or 75,
+		minScale = Settings.MinScale or 50,
+		maxScale = Settings.MaxScale or 100,
+		defaultScale = Settings.DefaultScale or 75,
+		baseSize = Vector2.new(868, 650),
+		aspectRatio = 868 / 650,
+		screenSize = Vector2.new(0, 0),
+		isScaling = false,
+		callbacks = {
+			onScaleStart = Settings.onScaleStart,
+			onScale = Settings.onScale,
+			onScaleEnd = Settings.onScaleEnd
+		}
+	}
+
+	-- Detect screen size using viewport/camera
+	function ScaleController:DetectScreenSize()
+		local viewportSize = workspace.CurrentCamera.ViewportSize
+		self.screenSize = viewportSize
+		return viewportSize
+	end
+
+	-- Validate scale percentage (50%-100%)
+	function ScaleController:ValidateScale(percentage)
+		if type(percentage) ~= "number" then
+			warn("MacLib Scale: Invalid scale percentage type. Expected number, got " .. type(percentage))
+			return self.currentScale
+		end
+		
+		-- Clamp to min/max bounds
+		local clamped = math.clamp(percentage, self.minScale, self.maxScale)
+		
+		-- Also clamp to screen size (100% of screen)
+		local screenSize = self:DetectScreenSize()
+		local maxScreenScale = math.min(
+			(screenSize.X / self.baseSize.X) * 100,
+			(screenSize.Y / self.baseSize.Y) * 100
+		)
+		
+		clamped = math.min(clamped, maxScreenScale)
+		
+		return clamped
+	end
+
+	-- Calculate actual window size from percentage
+	function ScaleController:CalculateSize(percentage)
+		local validatedPercentage = self:ValidateScale(percentage)
+		local scaleFactor = validatedPercentage / 100
+		
+		local newWidth = math.floor(self.baseSize.X * scaleFactor)
+		local newHeight = math.floor(self.baseSize.Y * scaleFactor)
+		
+		-- Maintain aspect ratio
+		local calculatedAspectRatio = newWidth / newHeight
+		if math.abs(calculatedAspectRatio - self.aspectRatio) > 0.01 then
+			newHeight = math.floor(newWidth / self.aspectRatio)
+		end
+		
+		return UDim2.fromOffset(newWidth, newHeight)
+	end
+
+	-- Set scale to specified percentage
+	function ScaleController:SetScale(percentage)
+		local validatedPercentage = self:ValidateScale(percentage)
+		
+		if self.isScaling then
+			return
+		end
+		
+		self.isScaling = true
+		local oldScale = self.currentScale
+		
+		-- Fire onScaleStart callback
+		if self.callbacks.onScaleStart then
+			local success, err = pcall(self.callbacks.onScaleStart, oldScale)
+			if not success then
+				warn("MacLib Scale: Error in onScaleStart callback: " .. tostring(err))
+			end
+		end
+		
+		-- Calculate new size
+		local newSize = self:CalculateSize(validatedPercentage)
+		
+		-- Update current scale
+		self.currentScale = validatedPercentage
+		
+		-- Fire onScale callback
+		if self.callbacks.onScale then
+			local success, err = pcall(self.callbacks.onScale, validatedPercentage, newSize)
+			if not success then
+				warn("MacLib Scale: Error in onScale callback: " .. tostring(err))
+			end
+		end
+		
+		-- Apply size with smooth animation
+		local tween = Tween(base, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = newSize
+		})
+		tween:Play()
+		
+		tween.Completed:Connect(function()
+			self.isScaling = false
+			
+			-- Fire onScaleEnd callback
+			if self.callbacks.onScaleEnd then
+				local success, err = pcall(self.callbacks.onScaleEnd, validatedPercentage, newSize)
+				if not success then
+					warn("MacLib Scale: Error in onScaleEnd callback: " .. tostring(err))
+				end
+			end
+		end)
+	end
+
+	-- Get current scale percentage
+	function ScaleController:GetScale()
+		return self.currentScale
+	end
+
+	-- Get detected screen size
+	function ScaleController:GetScreenSize()
+		return self.screenSize
+	end
+
+	-- Reset scale to default
+	function ScaleController:ResetScale()
+		self:SetScale(self.defaultScale)
+	end
+
+	-- Initialize screen size detection
+	ScaleController:DetectScreenSize()
+
+	-- Monitor screen size changes (rotation/window resize)
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+		local oldScreenSize = ScaleController.screenSize
+		local newScreenSize = ScaleController:DetectScreenSize()
+		
+		-- Recalculate and apply constraints if screen size changed significantly
+		if math.abs(newScreenSize.X - oldScreenSize.X) > 10 or math.abs(newScreenSize.Y - oldScreenSize.Y) > 10 then
+			-- Revalidate current scale against new screen size
+			local validatedScale = ScaleController:ValidateScale(ScaleController.currentScale)
+			if validatedScale ~= ScaleController.currentScale then
+				ScaleController:SetScale(validatedScale)
+			end
+		end
+	end)
+
+	-- Apply initial scale if DefaultScale is specified
+	if Settings.DefaultScale and Settings.DefaultScale ~= 75 then
+		ScaleController:SetScale(Settings.DefaultScale)
+	end
+
 	local sidebar = Instance.new("Frame")
 	sidebar.Name = "Sidebar"
 	sidebar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
@@ -5439,11 +5592,24 @@ function MacLib:Window(Settings)
 		return base.Size
 	end
 
-	function WindowFunctions:SetScale(Scale)
-		baseUIScale.Scale = Scale
+	function WindowFunctions:SetScale(percentage)
+		ScaleController:SetScale(percentage)
 	end
+	
 	function WindowFunctions:GetScale()
-		return baseUIScale.Scale
+		return ScaleController:GetScale()
+	end
+	
+	function WindowFunctions:GetScreenSize()
+		return ScaleController:GetScreenSize()
+	end
+	
+	function WindowFunctions:ResetScale()
+		ScaleController:ResetScale()
+	end
+	
+	function WindowFunctions:GetCurrentSize()
+		return base.Size
 	end
 
 	-- Resize Controller
