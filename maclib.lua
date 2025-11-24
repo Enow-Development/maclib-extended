@@ -5446,6 +5446,266 @@ function MacLib:Window(Settings)
 		return baseUIScale.Scale
 	end
 
+	-- Resize Controller
+	local ResizeController = {
+		isResizing = false,
+		resizeDirection = nil,
+		initialSize = nil,
+		initialMousePos = nil,
+		minSize = Settings.MinSize or UDim2.fromOffset(400, 300),
+		maxSize = Settings.MaxSize or UDim2.fromOffset(1920, 1080),
+		defaultSize = Settings.DefaultSize or Settings.Size or UDim2.fromOffset(868, 650),
+		maintainAspectRatio = Settings.MaintainAspectRatio or false,
+		dragHandles = {},
+		callbacks = {
+			onResizeStart = Settings.onResizeStart,
+			onResize = Settings.onResize,
+			onResizeEnd = Settings.onResizeEnd
+		}
+	}
+
+	-- Drag handle configurations
+	local handleConfigs = {
+		-- Edges
+		{name = "Right", position = UDim2.new(1, -3, 0, 0), size = UDim2.new(0, 6, 1, 0), cursor = "rbxasset://SystemCursors/SizeEW", anchor = Vector2.new(1, 0)},
+		{name = "Left", position = UDim2.new(0, 0, 0, 0), size = UDim2.new(0, 6, 1, 0), cursor = "rbxasset://SystemCursors/SizeEW", anchor = Vector2.new(0, 0)},
+		{name = "Top", position = UDim2.new(0, 0, 0, 0), size = UDim2.new(1, 0, 0, 6), cursor = "rbxasset://SystemCursors/SizeNS", anchor = Vector2.new(0, 0)},
+		{name = "Bottom", position = UDim2.new(0, 0, 1, -3), size = UDim2.new(1, 0, 0, 6), cursor = "rbxasset://SystemCursors/SizeNS", anchor = Vector2.new(0, 1)},
+		-- Corners
+		{name = "TopLeft", position = UDim2.new(0, 0, 0, 0), size = UDim2.fromOffset(12, 12), cursor = "rbxasset://SystemCursors/SizeNWSE", anchor = Vector2.new(0, 0)},
+		{name = "TopRight", position = UDim2.new(1, -12, 0, 0), size = UDim2.fromOffset(12, 12), cursor = "rbxasset://SystemCursors/SizeNESW", anchor = Vector2.new(1, 0)},
+		{name = "BottomLeft", position = UDim2.new(0, 0, 1, -12), size = UDim2.fromOffset(12, 12), cursor = "rbxasset://SystemCursors/SizeNESW", anchor = Vector2.new(0, 1)},
+		{name = "BottomRight", position = UDim2.new(1, -12, 1, -12), size = UDim2.fromOffset(12, 12), cursor = "rbxasset://SystemCursors/SizeNWSE", anchor = Vector2.new(1, 1)}
+	}
+
+	-- Create drag handles if Resizable is enabled
+	if Settings.Resizable then
+		for _, config in ipairs(handleConfigs) do
+			local handle = Instance.new("Frame")
+			handle.Name = "DragHandle_" .. config.name
+			handle.Position = config.position
+			handle.Size = config.size
+			handle.AnchorPoint = config.anchor
+			handle.BackgroundTransparency = 1
+			handle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			handle.BorderSizePixel = 0
+			handle.ZIndex = 10
+			handle.Parent = base
+
+			-- Create hitbox for easier interaction
+			local hitbox = Instance.new("TextButton")
+			hitbox.Name = "Hitbox"
+			hitbox.Size = UDim2.fromScale(1, 1)
+			hitbox.BackgroundTransparency = 1
+			hitbox.Text = ""
+			hitbox.ZIndex = 11
+			hitbox.Parent = handle
+
+			-- Store handle data
+			local handleData = {
+				frame = handle,
+				hitbox = hitbox,
+				direction = config.name,
+				cursor = config.cursor,
+				isHovered = false,
+				isActive = false,
+				lastClickTime = 0
+			}
+
+			table.insert(ResizeController.dragHandles, handleData)
+
+			-- Hover effects
+			hitbox.MouseEnter:Connect(function()
+				handleData.isHovered = true
+				UserInputService.MouseIcon = config.cursor
+				-- Subtle highlight on hover
+				Tween(handle, TweenInfo.new(0.2, Enum.EasingStyle.Sine), {
+					BackgroundTransparency = 0.7
+				}):Play()
+			end)
+
+			hitbox.MouseLeave:Connect(function()
+				handleData.isHovered = false
+				if not ResizeController.isResizing then
+					UserInputService.MouseIcon = ""
+				end
+				-- Remove highlight
+				Tween(handle, TweenInfo.new(0.2, Enum.EasingStyle.Sine), {
+					BackgroundTransparency = 1
+				}):Play()
+			end)
+
+			-- Double-click detection for reset
+			hitbox.MouseButton1Click:Connect(function()
+				local currentTime = tick()
+				if currentTime - handleData.lastClickTime < 0.3 then
+					-- Double-click detected
+					ResizeController:ResetToDefaultSize()
+				end
+				handleData.lastClickTime = currentTime
+			end)
+
+			-- Drag start
+			hitbox.MouseButton1Down:Connect(function()
+				ResizeController:HandleDragStart(handleData)
+			end)
+		end
+
+		-- Drag update and end
+		UserInputService.InputChanged:Connect(function(input)
+			if ResizeController.isResizing and input.UserInputType == Enum.UserInputType.MouseMovement then
+				ResizeController:HandleDragUpdate(input)
+			end
+		end)
+
+		UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 and ResizeController.isResizing then
+				ResizeController:HandleDragEnd()
+			end
+		end)
+	end
+
+	-- Resize Controller Methods
+	function ResizeController:HandleDragStart(handleData)
+		self.isResizing = true
+		self.resizeDirection = handleData.direction
+		self.initialSize = base.Size
+		self.initialMousePos = UserInputService:GetMouseLocation()
+		handleData.isActive = true
+
+		-- Fire onResizeStart callback
+		if self.callbacks.onResizeStart then
+			pcall(function()
+				self.callbacks.onResizeStart(self.initialSize)
+			end)
+		end
+	end
+
+	function ResizeController:HandleDragUpdate(input)
+		if not self.isResizing then return end
+
+		local mousePos = UserInputService:GetMouseLocation()
+		local delta = mousePos - self.initialMousePos
+
+		-- Calculate new size based on direction
+		local newSize = self.initialSize
+		local direction = self.resizeDirection
+
+		-- Calculate size changes based on drag direction
+		if direction:find("Right") then
+			newSize = UDim2.new(
+				newSize.X.Scale,
+				newSize.X.Offset + delta.X,
+				newSize.Y.Scale,
+				newSize.Y.Offset
+			)
+		end
+		if direction:find("Left") then
+			newSize = UDim2.new(
+				newSize.X.Scale,
+				newSize.X.Offset - delta.X,
+				newSize.Y.Scale,
+				newSize.Y.Offset
+			)
+		end
+		if direction:find("Bottom") then
+			newSize = UDim2.new(
+				newSize.X.Scale,
+				newSize.X.Offset,
+				newSize.Y.Scale,
+				newSize.Y.Offset + delta.Y
+			)
+		end
+		if direction:find("Top") then
+			newSize = UDim2.new(
+				newSize.X.Scale,
+				newSize.X.Offset,
+				newSize.Y.Scale,
+				newSize.Y.Offset - delta.Y
+			)
+		end
+
+		-- Apply aspect ratio if enabled
+		if self.maintainAspectRatio then
+			local initialAspectRatio = self.initialSize.X.Offset / self.initialSize.Y.Offset
+			newSize = UDim2.fromOffset(
+				newSize.X.Offset,
+				newSize.X.Offset / initialAspectRatio
+			)
+		end
+
+		-- Apply size constraints
+		newSize = self:ApplySizeConstraints(newSize)
+
+		-- Update window size
+		base.Size = newSize
+
+		-- Update content size
+		content.Size = UDim2.new(0, base.AbsoluteSize.X - sidebar.AbsoluteSize.X, 1, 0)
+
+		-- Calculate scale factor
+		local scaleFactor = newSize.X.Offset / self.initialSize.X.Offset
+
+		-- Fire onResize callback
+		if self.callbacks.onResize then
+			pcall(function()
+				self.callbacks.onResize(newSize, scaleFactor)
+			end)
+		end
+	end
+
+	function ResizeController:HandleDragEnd()
+		self.isResizing = false
+		UserInputService.MouseIcon = ""
+
+		-- Mark all handles as inactive
+		for _, handleData in ipairs(self.dragHandles) do
+			handleData.isActive = false
+		end
+
+		-- Fire onResizeEnd callback
+		if self.callbacks.onResizeEnd then
+			pcall(function()
+				self.callbacks.onResizeEnd(base.Size)
+			end)
+		end
+	end
+
+	function ResizeController:ApplySizeConstraints(size)
+		-- Clamp to min/max bounds
+		local newWidth = math.clamp(
+			size.X.Offset,
+			self.minSize.X.Offset,
+			self.maxSize.X.Offset
+		)
+		local newHeight = math.clamp(
+			size.Y.Offset,
+			self.minSize.Y.Offset,
+			self.maxSize.Y.Offset
+		)
+
+		return UDim2.fromOffset(newWidth, newHeight)
+	end
+
+	function ResizeController:ResetToDefaultSize()
+		-- Don't reset if already at default size
+		if base.Size.X.Offset == self.defaultSize.X.Offset and 
+		   base.Size.Y.Offset == self.defaultSize.Y.Offset then
+			return
+		end
+
+		-- Animate to default size
+		local resetTween = Tween(base, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = self.defaultSize
+		})
+		resetTween:Play()
+
+		-- Update content size after animation
+		resetTween.Completed:Connect(function()
+			content.Size = UDim2.new(0, base.AbsoluteSize.X - sidebar.AbsoluteSize.X, 1, 0)
+		end)
+	end
+
 	local ClassParser = {
 		["Toggle"] = {
 			Save = function(Flag, data)
