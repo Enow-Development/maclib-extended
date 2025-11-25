@@ -6,11 +6,12 @@ MacLib is a comprehensive UI library for creating script interfaces in Roblox. T
 
 1. [Getting Started](getting-started.md)
 2. [Window Configuration](window-configuration.md)
-3. [Tabs](tabs.md)
-4. [Sections](sections.md)
-5. [Components](components.md)
-6. [Notifications](notifications.md)
-7. [Examples](examples.md)
+3. [Window Scaling](scaling.md) - **New!**
+4. [Tabs](tabs.md)
+5. [Sections](sections.md)
+6. [Components](components.md)
+7. [Notifications](notifications.md)
+8. [Examples](examples.md)
 
 ## Quick Start
 
@@ -38,6 +39,9 @@ section:Button({
 
 - Modern and clean UI design
 - Acrylic blur effects
+- **Dynamic window scaling (50-100%)** - **New!**
+- **Responsive design for all UI elements** - **New!**
+- **Mobile-optimized with touch support** - **New!**
 - Resizable windows and sidebars
 - Multiple tab support
 - Three section layouts: Left, Right, and Full

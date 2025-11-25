@@ -6043,22 +6043,48 @@ function MacLib:Window(Settings)
 		return base.Size
 	end
 
+	--- Sets the window scale to the specified percentage
+	-- @param percentage number - Scale percentage (50-100)
+	-- The scale will be clamped to the configured MinScale and MaxScale values
+	-- Also respects screen size constraints (max 100% of screen)
+	-- Triggers smooth animation and responsive layout updates
+	-- Fires onScaleStart, onScale, and onScaleEnd callbacks if configured
+	-- Example: window:SetScale(80) -- Sets window to 80% scale
 	function WindowFunctions:SetScale(percentage)
 		ScaleController:SetScale(percentage)
 	end
 	
+	--- Gets the current window scale percentage
+	-- @return number - Current scale percentage (50-100)
+	-- Returns the actual scale after any clamping/constraints are applied
+	-- Example: local currentScale = window:GetScale()
 	function WindowFunctions:GetScale()
 		return ScaleController:GetScale()
 	end
 	
+	--- Gets the detected screen size
+	-- @return Vector2 - Screen size (viewport size)
+	-- Automatically updated when screen size changes (rotation, window resize)
+	-- Useful for calculating custom scale values or responsive layouts
+	-- Example: local screenSize = window:GetScreenSize()
 	function WindowFunctions:GetScreenSize()
 		return ScaleController:GetScreenSize()
 	end
 	
+	--- Resets the window scale to the default scale
+	-- Uses Settings.DefaultScale if specified, otherwise defaults to 75%
+	-- Applies smooth animation during the reset transition
+	-- Idempotent - safe to call even if already at default scale
+	-- Example: window:ResetScale()
 	function WindowFunctions:ResetScale()
 		ScaleController:ResetScale()
 	end
 	
+	--- Gets the current window size in pixels
+	-- @return UDim2 - Current window size
+	-- Returns the actual rendered size after scaling is applied
+	-- Useful for layout calculations or custom positioning
+	-- Example: local size = window:GetCurrentSize()
 	function WindowFunctions:GetCurrentSize()
 		return base.Size
 	end
