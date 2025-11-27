@@ -6009,11 +6009,13 @@ function MacLib:Window(Settings)
 	local function _SetUserInfoState(State)
 		if State then
 			userInfo.Visible = true
+			tabSwitchers.Size = UDim2.new(1, 0, 1, -107)
 			headshot.Image = (isReady and headshotImage) or "rbxassetid://0"
 			username.Text = "@" .. LocalPlayer.Name
 			displayName.Text = LocalPlayer.DisplayName
 		else
 			userInfo.Visible = false
+			tabSwitchers.Size = UDim2.new(1, 0, 1, 0)
 		end
 	end
 
